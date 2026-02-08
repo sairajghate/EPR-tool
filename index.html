@@ -10,6 +10,10 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
+  <!-- Leaflet (for map picking). Needs internet first time. App works offline afterward, but satellite tiles won’t. -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
   <style>
     :root { --b:#e6e6e6; --pad:12px; --br:14px; }
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:14px;background:#fff;color:#111}
@@ -23,11 +27,11 @@
       width:100%;padding:10px;margin-top:6px;box-sizing:border-box;
       border:1px solid var(--b);border-radius:12px;font-size:16px; /* iOS no-zoom */
     }
-    textarea{min-height:170px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
     button{width:100%;padding:12px;margin-top:10px;border-radius:12px;border:1px solid var(--b);background:#fff;font-weight:800}
+    button:active{transform:scale(.99)}
     .row{display:flex;gap:10px;flex-wrap:wrap}
     .row button{flex:1 1 160px}
-    canvas{width:100%;height:340px;border:1px solid var(--b);border-radius:var(--br);background:#fff;touch-action:manipulation}
+    canvas{width:100%;height:360px;border:1px solid var(--b);border-radius:var(--br);background:#fff;touch-action:manipulation}
     .kpi{margin:8px 0;font-size:1.03rem}
     .good{color:#0a7b2e;font-weight:900}
     .warn{color:#b35a00;font-weight:900}
@@ -35,12 +39,23 @@
     .pill{display:inline-block;padding:2px 8px;border:1px solid var(--b);border-radius:999px;font-size:.85rem;margin-left:6px}
     hr{border:none;border-top:1px solid #eee;margin:10px 0}
     .small{font-size:.88rem}
+    table{border-collapse:collapse}
+    th{font-size:.9rem;color:#444}
+    td,th{padding:8px;border-bottom:1px solid #f2f2f2;vertical-align:top}
+    td input, td select{margin-top:0}
+    .tinybtn{width:auto;padding:8px 10px;border-radius:10px}
+    .tag{display:inline-block;padding:2px 8px;border:1px solid #ddd;border-radius:999px;font-size:.82rem;color:#333;margin-left:8px}
+    .right{display:flex;justify-content:flex-end;gap:10px;align-items:center}
   </style>
 </head>
 
 <body>
-  <h1>EPR Plotter <span class="pill">offline app</span></h1>
-  <div class="muted">Tap points on the plot to exclude/include. Remote EPR uses tail extrapolation (V vs 1/d).</div>
+  <h1>EPR Plotter <span class="pill">field app</span></h1>
+  <div class="muted">
+    Workflow: take your first GPS lock → set it as <b>REF</b>. Enter early points manually (0.1, 1, 2, 3…).
+    When you’re far enough to trust GPS, switch rows to <b>GPS</b> mode and the distance auto-calculates as straight-line from REF.
+    Excluding a point recalculates curve + knee + V∞ + checks.
+  </div>
 
   <div class="grid" style="margin-top:12px;">
     <div class="card">
@@ -58,7 +73,7 @@
 
       <label>Remote estimation</label>
       <select id="remoteMode">
-        <option value="extrap">Extrapolate V∞ (fit tail V vs 1/d)</option>
+        <option value="extrap">Extrapolate V∞ (tail fit: V vs 1/d)</option>
         <option value="avgLastN">Average last N points</option>
         <option value="last">Use last point</option>
       </select>
@@ -71,31 +86,75 @@
 
       <div class="row">
         <button id="btnUpdate">Update</button>
-        <button id="btnReset">Reset exclusions</button>
+        <button id="btnResetExclude">Clear excludes</button>
       </div>
+
       <div class="row">
-        <button id="btnExample">Load example</button>
+        <button id="btnAddRow">Add row</button>
+        <button id="btnAdd5">Add 5 rows</button>
+      </div>
+
+      <div class="row">
+        <button id="btnGpsNewRef">GPS lock → NEW REF row</button>
+        <button id="btnSetRefSelected">Set selected as REF</button>
+      </div>
+
+      <div class="row">
         <button id="btnCSV">Download CSV</button>
+        <button id="btnExample">Load example</button>
       </div>
 
       <hr>
 
       <div class="kpi">Plateau check: <span id="plateau">—</span></div>
       <div class="muted small" id="plateauDetail">—</div>
+
+      <hr>
+
+      <div class="muted small">
+        Tip: Use manual distances until you’re far enough that GPS error is small relative to spacing.
+      </div>
     </div>
 
     <div class="card">
-      <h3 style="margin:0 0 6px 0;">Distance vs mV</h3>
-      <div class="muted small">Paste lines: <b>distance mV</b> (space/comma/tab). Example: <code>61 197</code></div>
-      <textarea id="data" spellcheck="false"></textarea>
+      <div class="right">
+        <div class="muted small">Selected row: <span id="selRowLabel">none</span></div>
+        <div class="muted small">REF: <span id="refLabel">none</span></div>
+      </div>
 
-      <h3 style="margin:12px 0 6px 0;">Plot (tap points to exclude)</h3>
-      <canvas id="plot" width="1000" height="340"></canvas>
-      <div class="muted small">Excluded points show as a red ✕. Tap again to include.</div>
+      <h3 style="margin:6px 0 6px 0;">Measurements (table)</h3>
+      <div class="muted small">
+        Mode <b>Manual</b> uses your distance entry. Mode <b>GPS</b> uses straight-line distance from REF (requires REF lat/lon).
+        Use Map/Satellite to pick GPS points if needed.
+      </div>
+
+      <div style="overflow:auto; margin-top:10px;">
+        <table id="tbl" style="width:100%; min-width:980px;">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Select</th>
+              <th>Mode</th>
+              <th>Distance (m)</th>
+              <th>mV</th>
+              <th>Lat</th>
+              <th>Lon</th>
+              <th>GPS tools</th>
+              <th>Exclude</th>
+            </tr>
+          </thead>
+          <tbody id="tblBody"></tbody>
+        </table>
+      </div>
+
+      <h3 style="margin:12px 0 6px 0;">Plot</h3>
+      <canvas id="plot" width="1100" height="360"></canvas>
+      <div class="muted small">Black dots = included points. Red ✕ = excluded points. Smooth curve re-fits on included points only.</div>
 
       <hr>
 
       <h3 style="margin:0 0 6px 0;">Results</h3>
+
       <div class="kpi">Knee distance: <span id="knee">—</span></div>
       <div class="muted small" id="kneeDetail">—</div>
 
@@ -109,6 +168,24 @@
 
       <div class="kpi">Scale (I<sub>fault</sub>/I<sub>test</sub> × SF): <span id="scale">—</span></div>
       <div class="kpi">EPR<sub>scaled</sub> (V): <span id="eprscaled">—</span></div>
+    </div>
+  </div>
+
+  <!-- Map modal -->
+  <div id="mapModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); padding:18px; z-index:9999;">
+    <div style="background:#fff; border-radius:14px; padding:12px; max-width:980px; margin:0 auto;">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+        <b>Pick GPS point <span class="tag" id="mapRowTag">row ?</span></b>
+        <div style="display:flex; gap:10px; align-items:center;">
+          <select id="mapLayer" style="width:auto;">
+            <option value="esri">Satellite (Esri)</option>
+            <option value="osm">Map (OSM)</option>
+          </select>
+          <button id="btnCloseMap" class="tinybtn">Close</button>
+        </div>
+      </div>
+      <div class="muted small">Tap the map to set lat/lon for the selected row.</div>
+      <div id="map" style="height:440px; margin-top:10px; border:1px solid #eee; border-radius:12px;"></div>
     </div>
   </div>
 
