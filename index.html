@@ -10,7 +10,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
-  <!-- Leaflet (for map picking). Needs internet first time. App works offline afterward, but satellite tiles won’t. -->
+  <!-- Leaflet (map picking). First load needs internet; app works offline afterward. -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
@@ -25,7 +25,7 @@
     label{display:block;margin-top:10px;font-weight:700}
     input,select,textarea{
       width:100%;padding:10px;margin-top:6px;box-sizing:border-box;
-      border:1px solid var(--b);border-radius:12px;font-size:16px; /* iOS no-zoom */
+      border:1px solid var(--b);border-radius:12px;font-size:16px;
     }
     button{width:100%;padding:12px;margin-top:10px;border-radius:12px;border:1px solid var(--b);background:#fff;font-weight:800}
     button:active{transform:scale(.99)}
@@ -43,18 +43,20 @@
     th{font-size:.9rem;color:#444}
     td,th{padding:8px;border-bottom:1px solid #f2f2f2;vertical-align:top}
     td input, td select{margin-top:0}
-    .tinybtn{width:auto;padding:8px 10px;border-radius:10px}
-    .tag{display:inline-block;padding:2px 8px;border:1px solid #ddd;border-radius:999px;font-size:.82rem;color:#333;margin-left:8px}
+    .tinybtn{width:auto;padding:8px 10px;border-radius:10px;margin-top:0}
+    .tag{display:inline-block;padding:2px 8px;border:1px solid #ddd;border-radius:999px;font-size:.82rem;color:#333}
     .right{display:flex;justify-content:flex-end;gap:10px;align-items:center}
+    .status{font-size:.85rem;color:#666;margin-top:6px}
+    .status strong{color:#111}
   </style>
 </head>
 
 <body>
   <h1>EPR Plotter <span class="pill">field app</span></h1>
   <div class="muted">
-    Workflow: take your first GPS lock → set it as <b>REF</b>. Enter early points manually (0.1, 1, 2, 3…).
-    When you’re far enough to trust GPS, switch rows to <b>GPS</b> mode and the distance auto-calculates as straight-line from REF.
-    Excluding a point recalculates curve + knee + V∞ + checks.
+    Workflow: first GPS lock → set as <b>REF</b>. Enter early points manually (0.1, 1, 2, 3…).
+    When far enough to trust GPS, switch row to <b>GPS</b> mode and <b>Sync GPS</b> to stabilise coordinates.
+    Distance auto-calculates as straight-line from REF.
   </div>
 
   <div class="grid" style="margin-top:12px;">
@@ -70,6 +72,18 @@
       <label>Additional scaling factor (SF)</label>
       <input id="sf" type="number" step="0.001" value="1.0">
       <div class="muted small">Leave 1.0 unless applying split/DF/derating.</div>
+
+      <hr>
+
+      <h3 style="margin:0 0 6px 0;">GPS sync settings</h3>
+      <label>Target accuracy (m)</label>
+      <input id="gpsTargetAcc" type="number" step="1" value="10">
+      <div class="muted small">“Sync GPS” will keep sampling until accuracy ≤ this value (or timeout).</div>
+
+      <label>Max wait time (s)</label>
+      <input id="gpsTimeout" type="number" step="1" value="20">
+
+      <hr>
 
       <label>Remote estimation</label>
       <select id="remoteMode">
@@ -92,10 +106,11 @@
       <div class="row">
         <button id="btnAddRow">Add row</button>
         <button id="btnAdd5">Add 5 rows</button>
+        <button id="btnAdd20">Add 20 rows</button>
       </div>
 
       <div class="row">
-        <button id="btnGpsNewRef">GPS lock → NEW REF row</button>
+        <button id="btnGpsNewRef">GPS Sync → NEW REF row</button>
         <button id="btnSetRefSelected">Set selected as REF</button>
       </div>
 
@@ -108,12 +123,6 @@
 
       <div class="kpi">Plateau check: <span id="plateau">—</span></div>
       <div class="muted small" id="plateauDetail">—</div>
-
-      <hr>
-
-      <div class="muted small">
-        Tip: Use manual distances until you’re far enough that GPS error is small relative to spacing.
-      </div>
     </div>
 
     <div class="card">
@@ -124,12 +133,11 @@
 
       <h3 style="margin:6px 0 6px 0;">Measurements (table)</h3>
       <div class="muted small">
-        Mode <b>Manual</b> uses your distance entry. Mode <b>GPS</b> uses straight-line distance from REF (requires REF lat/lon).
-        Use Map/Satellite to pick GPS points if needed.
+        Manual = you type distance. GPS = straight-line distance from REF (needs REF lat/lon). Use <b>Sync GPS</b> to improve initial lock.
       </div>
 
       <div style="overflow:auto; margin-top:10px;">
-        <table id="tbl" style="width:100%; min-width:980px;">
+        <table id="tbl" style="width:100%; min-width:1120px;">
           <thead>
             <tr>
               <th>#</th>
@@ -140,6 +148,7 @@
               <th>Lat</th>
               <th>Lon</th>
               <th>GPS tools</th>
+              <th>GPS status</th>
               <th>Exclude</th>
             </tr>
           </thead>
@@ -149,12 +158,11 @@
 
       <h3 style="margin:12px 0 6px 0;">Plot</h3>
       <canvas id="plot" width="1100" height="360"></canvas>
-      <div class="muted small">Black dots = included points. Red ✕ = excluded points. Smooth curve re-fits on included points only.</div>
+      <div class="muted small">Black dots = included points. Red ✕ = excluded points. Curve + checks re-fit using included points only.</div>
 
       <hr>
 
       <h3 style="margin:0 0 6px 0;">Results</h3>
-
       <div class="kpi">Knee distance: <span id="knee">—</span></div>
       <div class="muted small" id="kneeDetail">—</div>
 
