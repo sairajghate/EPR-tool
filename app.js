@@ -354,4 +354,363 @@ function monotoneCubicSample(x, y, samplesPerSeg=25){
     }
   }
 
-  //
+  // Sample each segment using cubic Hermite form
+  const out = [];
+  for(let i=0;i<n-1;i++){
+    const xi=x[i], xi1=x[i+1];
+    const yi=y[i], yi1=y[i+1];
+    const hi = h[i];
+    const mi = m[i], mi1 = m[i+1];
+
+    const segSamples = samplesPerSeg;
+    for(let j=0;j<=segSamples;j++){
+      const t = j/segSamples;
+      const t2=t*t, t3=t2*t;
+      const h00 =  2*t3 - 3*t2 + 1;
+      const h10 =      t3 - 2*t2 + t;
+      const h01 = -2*t3 + 3*t2;
+      const h11 =      t3 -    t2;
+
+      const xs = xi + t*hi;
+      const ys = h00*yi + h10*hi*mi + h01*yi1 + h11*hi*mi1;
+      out.push({x: xs, y: ys});
+    }
+  }
+  return out;
+}
+
+/* ========= Plotting ========= */
+function drawPlot(allPts, incPts, smoothCurve, kneeDistance){
+  // HiDPI
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || 1100;
+  const cssH = canvas.clientHeight || 360;
+  canvas.width = Math.floor(cssW*dpr);
+  canvas.height = Math.floor(cssH*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+
+  const padL=60, padR=16, padT=14, padB=44;
+  const w=cssW-padL-padR, h=cssH-padT-padB;
+
+  ctx.clearRect(0,0,cssW,cssH);
+  ctx.fillStyle="#fff"; ctx.fillRect(0,0,cssW,cssH);
+
+  if(!allPts.length){
+    ctx.fillStyle="#666";
+    ctx.fillText("No data", padL, padT+20);
+    return;
+  }
+
+  const xs = allPts.map(p=>p.d);
+  const ys = allPts.map(p=>p.mv);
+  const xmin=Math.min(...xs), xmax=Math.max(...xs);
+  const ymin=Math.min(...ys), ymax=Math.max(...ys);
+  const xspan=(xmax-xmin)||1, yspan=(ymax-ymin)||1;
+
+  const X0 = xmin - 0.03*xspan, X1 = xmax + 0.03*xspan;
+  const Y0 = ymin - 0.08*yspan, Y1 = ymax + 0.08*yspan;
+
+  const xpix = (x)=> padL + ((x-X0)/(X1-X0))*w;
+  const ypix = (y)=> padT + (1-((y-Y0)/(Y1-Y0)))*h;
+
+  // axes + grid
+  ctx.strokeStyle="#ddd"; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(padL,padT); ctx.lineTo(padL,padT+h); ctx.lineTo(padL+w,padT+h); ctx.stroke();
+
+  ctx.font="12px system-ui,-apple-system,Segoe UI,Roboto,Arial";
+  const xt=5, yt=5;
+
+  for(let i=0;i<=xt;i++){
+    const x= X0 + (i/xt)*(X1-X0);
+    const xp=xpix(x);
+    ctx.strokeStyle="#f0f0f0";
+    ctx.beginPath(); ctx.moveTo(xp,padT); ctx.lineTo(xp,padT+h); ctx.stroke();
+    ctx.fillStyle="#666";
+    ctx.fillText(xmax>100 ? x.toFixed(0) : x.toFixed(1), xp-10, padT+h+18);
+  }
+  for(let i=0;i<=yt;i++){
+    const y= Y0 + (i/yt)*(Y1-Y0);
+    const yp=ypix(y);
+    ctx.strokeStyle="#f0f0f0";
+    ctx.beginPath(); ctx.moveTo(padL,yp); ctx.lineTo(padL+w,yp); ctx.stroke();
+    ctx.fillStyle="#666";
+    ctx.fillText(y.toFixed(0), 10, yp+4);
+  }
+
+  ctx.fillStyle="#333";
+  ctx.fillText("Distance (m)", padL + w/2 - 34, padT+h+36);
+  ctx.save();
+  ctx.translate(18, padT + h/2 + 34);
+  ctx.rotate(-Math.PI/2);
+  ctx.fillText("Voltage (mV)", 0, 0);
+  ctx.restore();
+
+  // Smooth curve (included points fit)
+  if(smoothCurve && smoothCurve.length >= 2){
+    ctx.strokeStyle="#111"; ctx.lineWidth=2.2;
+    ctx.beginPath();
+    smoothCurve.forEach((p,i)=>{
+      const xp = xpix(p.x);
+      const yp = ypix(p.y);
+      if(i===0) ctx.moveTo(xp,yp); else ctx.lineTo(xp,yp);
+    });
+    ctx.stroke();
+  } else {
+    // fallback: connect included points
+    if(incPts.length){
+      ctx.strokeStyle="#111"; ctx.lineWidth=1.8;
+      ctx.beginPath();
+      incPts.forEach((p,i)=>{
+        const xp=xpix(p.d), yp=ypix(p.mv);
+        if(i===0) ctx.moveTo(xp,yp); else ctx.lineTo(xp,yp);
+      });
+      ctx.stroke();
+    }
+  }
+
+  // Knee marker (vertical dashed)
+  if(Number.isFinite(kneeDistance)){
+    const kx = xpix(kneeDistance);
+    ctx.setLineDash([6,5]);
+    ctx.strokeStyle="#999"; ctx.lineWidth=1.2;
+    ctx.beginPath(); ctx.moveTo(kx, padT); ctx.lineTo(kx, padT+h); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Points
+  // Excluded as red X, included as black dots
+  allPts.forEach((p)=>{
+    const xp=xpix(p.d), yp=ypix(p.mv);
+    if(p.excluded){
+      ctx.strokeStyle="#b00020"; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(xp-6,yp-6); ctx.lineTo(xp+6,yp+6); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(xp-6,yp+6); ctx.lineTo(xp+6,yp-6); ctx.stroke();
+    } else {
+      ctx.fillStyle="#000";
+      ctx.beginPath(); ctx.arc(xp,yp,3.8,0,Math.PI*2); ctx.fill();
+    }
+  });
+}
+
+/* ========= Main calc ========= */
+function recalc(){
+  const itest = Number($("itest").value);
+  const ifault = Number($("ifault").value);
+  const sf = Number($("sf").value);
+  const remoteMode = $("remoteMode").value;
+  const nLast = Math.max(3, Number($("nLast").value));
+  const tailMin = Math.max(3, Number($("tailMin").value));
+
+  const allPts = getPointsFromTable();
+  const incPts = allPts.filter(p => !p.excluded);
+
+  if(!incPts.length || !Number.isFinite(itest) || itest<=0){
+    // still draw excluded/included as-is
+    drawPlot(allPts, incPts, null, null);
+    $("knee").textContent = "—";
+    $("kneeDetail").textContent = "—";
+    $("vinf").textContent = "—";
+    $("rg").textContent = "—";
+    $("fitDetail").textContent = "—";
+    $("scale").textContent = "—";
+    $("eprscaled").textContent = "—";
+    $("plateau").textContent = "Insufficient";
+    $("plateau").className = "warn";
+    $("plateauDetail").textContent = "Enter I_test > 0 and at least 1 included point.";
+    return;
+  }
+
+  // Sort included points by distance
+  incPts.sort((a,b)=>a.d-b.d);
+
+  const dist = incPts.map(p=>p.d);
+  const mv   = incPts.map(p=>p.mv);
+  const V    = mv.map(x=>x/1000);
+  const R    = V.map(v=>v/itest);
+
+  // Knee
+  const knee = piecewiseKnee(dist, R);
+  const kneeDistance = knee.idx===null ? null : dist[knee.idx];
+  $("knee").textContent = kneeDistance===null ? "—" : `${kneeDistance.toFixed(1)} m`;
+  $("kneeDetail").textContent = knee.detail;
+
+  // Tail selection (after knee if possible)
+  let tailDist=[], tailV=[];
+  if(knee.idx!==null && (dist.length-knee.idx) >= tailMin){
+    tailDist = dist.slice(knee.idx);
+    tailV = V.slice(knee.idx);
+  } else {
+    const n = Math.min(tailMin, dist.length);
+    tailDist = dist.slice(-n);
+    tailV = V.slice(-n);
+  }
+
+  // Remote V∞
+  let Vinf = NaN;
+  let fitDetail = "—";
+
+  if(remoteMode==="extrap"){
+    const x = tailDist.map(d=>1/d);
+    const y = tailV;
+    const f = linReg(x,y);
+    Vinf = f.a;
+    fitDetail = `Tail fit (V vs 1/d): pts=${x.length}, R²=${f.r2.toFixed(3)} → V∞=intercept`;
+  } else if(remoteMode==="avgLastN"){
+    const n = Math.min(nLast, V.length);
+    Vinf = avg(V.slice(-n));
+    fitDetail = `V∞ = average of last ${n} included points`;
+  } else {
+    Vinf = V[V.length-1];
+    fitDetail = `V∞ = last included point`;
+  }
+
+  const Rg = Vinf / itest;
+  const scale = (ifault/itest) * sf;
+  const EPR_scaled = Vinf * scale;
+
+  $("vinf").textContent = fmt(Vinf,3);
+  $("rg").textContent = fmt(Rg,5);
+  $("fitDetail").textContent = fitDetail;
+
+  $("scale").textContent = fmt(scale,4);
+  $("eprscaled").textContent = fmt(EPR_scaled,1);
+
+  // Plateau check
+  const pchk = plateauCheck(dist, R, nLast);
+  const pel = $("plateau");
+  pel.textContent = pchk.status;
+  pel.className = pchk.cls;
+  $("plateauDetail").textContent = pchk.detail;
+
+  // Smooth curve through included points (monotone cubic)
+  const smooth = monotoneCubicSample(dist, mv, 30);
+
+  // For drawPlot we want original excluded flags present in allPts
+  drawPlot(allPts, incPts, smooth, kneeDistance);
+}
+
+/* ========= CSV ========= */
+function downloadCSV(){
+  const itest = Number($("itest").value);
+  const ifault = Number($("ifault").value);
+  const sf = Number($("sf").value);
+  const remoteMode = $("remoteMode").value;
+
+  const rows = [...tblBody.querySelectorAll("tr")].map(tr=>{
+    const mode = tr.querySelector(".mode").value;
+    const d = tr.querySelector(".dist").value;
+    const mv = tr.querySelector(".mv").value;
+    const lat = tr.querySelector(".lat").value;
+    const lon = tr.querySelector(".lon").value;
+    const ex = tr.querySelector(".ex").checked ? "Y" : "";
+    const sel = (tr.dataset.rowid === refRowId) ? "REF" : "";
+    return { mode, d, mv, lat, lon, ex, sel };
+  });
+
+  const out = [];
+  out.push(["#", "Mode", "Distance_m", "mV", "Lat", "Lon", "Exclude", "RefTag"].join(","));
+  rows.forEach((r,i)=>{
+    out.push([i+1, r.mode, r.d, r.mv, r.lat, r.lon, r.ex, r.sel].join(","));
+  });
+  out.push("");
+  out.push(["I_test_A", itest].join(","));
+  out.push(["I_fault_A", ifault].join(","));
+  out.push(["SF", sf].join(","));
+  out.push(["RemoteMode", remoteMode].join(","));
+  out.push(["REF_row", refRowId ? rowIndexById(refRowId) : ""].join(","));
+
+  const csv = out.join("\n");
+  const blob = new Blob([csv], {type:"text/csv;charset=utf-8"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "epr_plotter.csv";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/* ========= Actions ========= */
+$("btnUpdate").addEventListener("click", recalc);
+
+$("btnResetExclude").addEventListener("click", ()=>{
+  [...tblBody.querySelectorAll("tr")].forEach(tr=>tr.querySelector(".ex").checked = false);
+  recalc();
+});
+
+$("btnAddRow").addEventListener("click", ()=> addRow({}));
+$("btnAdd5").addEventListener("click", ()=> { for(let i=0;i<5;i++) addRow({}); });
+
+$("btnSetRefSelected").addEventListener("click", ()=>{
+  if(!selectedRowId){
+    alert("Select a row (radio) first.");
+    return;
+  }
+  refRowId = selectedRowId;
+  renumberRows();
+  recalc();
+});
+
+$("btnGpsNewRef").addEventListener("click", async ()=>{
+  try{
+    const pos = await new Promise((resolve, reject)=>{
+      navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy:true, timeout:15000 });
+    });
+
+    // Create a new row set to GPS mode with this lat/lon
+    addRow({ mode:"gps", lat: Number(pos.coords.latitude.toFixed(6)), lon: Number(pos.coords.longitude.toFixed(6)) });
+
+    // Select it and set as REF
+    const lastTr = [...tblBody.querySelectorAll("tr")].slice(-1)[0];
+    lastTr.querySelector(".sel").checked = true;
+    selectedRowId = lastTr.dataset.rowid;
+    refRowId = selectedRowId;
+
+    renumberRows();
+    recalc();
+  }catch(e){
+    alert("GPS failed. Check location permissions for Safari.");
+  }
+});
+
+$("btnCSV").addEventListener("click", downloadCSV);
+
+$("btnExample").addEventListener("click", ()=>{
+  // Clear existing rows
+  tblBody.innerHTML = "";
+  refRowId = null;
+  selectedRowId = null;
+
+  // Example: first GPS lock row (REF) + manual early points + GPS points later
+  addRow({ mode:"gps", lat:-34.928500, lon:138.600700, d:"", mv:141 }); // not real, just example
+  // set REF
+  const firstTr = [...tblBody.querySelectorAll("tr")][0];
+  firstTr.querySelector(".sel").checked = true;
+  selectedRowId = firstTr.dataset.rowid;
+  refRowId = selectedRowId;
+
+  addRow({ mode:"manual", d:0.1, mv:141 });
+  addRow({ mode:"manual", d:1, mv:151 });
+  addRow({ mode:"manual", d:2, mv:155 });
+  addRow({ mode:"manual", d:3, mv:155 });
+  addRow({ mode:"manual", d:4, mv:156 });
+  addRow({ mode:"manual", d:6, mv:144 });
+  addRow({ mode:"manual", d:11, mv:171 });
+  addRow({ mode:"manual", d:17, mv:181 });
+  addRow({ mode:"manual", d:28, mv:196 });
+
+  // Later GPS points (their dist will compute from REF once REF is set and coords exist)
+  addRow({ mode:"gps", lat:-34.928650, lon:138.600820, mv:197 });
+  addRow({ mode:"gps", lat:-34.928850, lon:138.601100, mv:218 });
+  addRow({ mode:"gps", lat:-34.929300, lon:138.601500, mv:220 });
+
+  renumberRows();
+  recalc();
+});
+
+/* ========= Init ========= */
+// Start with a few blank rows for quick field entry
+for(let i=0;i<8;i++) addRow({});
+renumberRows();
+recalc();
