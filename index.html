@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>EPR Plotter</title>
+
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#111111">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+  <style>
+    :root { --b:#e6e6e6; --pad:12px; --br:14px; }
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:14px;background:#fff;color:#111}
+    h1{margin:0 0 6px 0;font-size:22px}
+    .muted{color:#666;font-size:.92rem}
+    .grid{display:grid;gap:12px;grid-template-columns:1fr}
+    @media(min-width:980px){.grid{grid-template-columns:360px 1fr}}
+    .card{border:1px solid var(--b);border-radius:var(--br);padding:var(--pad);background:#fff}
+    label{display:block;margin-top:10px;font-weight:700}
+    input,select,textarea{
+      width:100%;padding:10px;margin-top:6px;box-sizing:border-box;
+      border:1px solid var(--b);border-radius:12px;font-size:16px; /* iOS no-zoom */
+    }
+    textarea{min-height:170px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    button{width:100%;padding:12px;margin-top:10px;border-radius:12px;border:1px solid var(--b);background:#fff;font-weight:800}
+    .row{display:flex;gap:10px;flex-wrap:wrap}
+    .row button{flex:1 1 160px}
+    canvas{width:100%;height:340px;border:1px solid var(--b);border-radius:var(--br);background:#fff;touch-action:manipulation}
+    .kpi{margin:8px 0;font-size:1.03rem}
+    .good{color:#0a7b2e;font-weight:900}
+    .warn{color:#b35a00;font-weight:900}
+    .bad{color:#b00020;font-weight:900}
+    .pill{display:inline-block;padding:2px 8px;border:1px solid var(--b);border-radius:999px;font-size:.85rem;margin-left:6px}
+    hr{border:none;border-top:1px solid #eee;margin:10px 0}
+    .small{font-size:.88rem}
+  </style>
+</head>
+
+<body>
+  <h1>EPR Plotter <span class="pill">offline app</span></h1>
+  <div class="muted">Tap points on the plot to exclude/include. Remote EPR uses tail extrapolation (V vs 1/d).</div>
+
+  <div class="grid" style="margin-top:12px;">
+    <div class="card">
+      <h3 style="margin:0 0 6px 0;">Inputs</h3>
+
+      <label>Injection current, I<sub>test</sub> (A)</label>
+      <input id="itest" type="number" step="0.001" value="2.5">
+
+      <label>Fault current, I<sub>fault</sub> (A)</label>
+      <input id="ifault" type="number" step="0.1" value="2210">
+
+      <label>Additional scaling factor (SF)</label>
+      <input id="sf" type="number" step="0.001" value="1.0">
+      <div class="muted small">Leave 1.0 unless applying split/DF/derating.</div>
+
+      <label>Remote estimation</label>
+      <select id="remoteMode">
+        <option value="extrap">Extrapolate V∞ (fit tail V vs 1/d)</option>
+        <option value="avgLastN">Average last N points</option>
+        <option value="last">Use last point</option>
+      </select>
+
+      <label>N (last-N + checks)</label>
+      <input id="nLast" type="number" min="3" max="30" step="1" value="5">
+
+      <label>Tail points (min)</label>
+      <input id="tailMin" type="number" min="3" max="30" step="1" value="5">
+
+      <div class="row">
+        <button id="btnUpdate">Update</button>
+        <button id="btnReset">Reset exclusions</button>
+      </div>
+      <div class="row">
+        <button id="btnExample">Load example</button>
+        <button id="btnCSV">Download CSV</button>
+      </div>
+
+      <hr>
+
+      <div class="kpi">Plateau check: <span id="plateau">—</span></div>
+      <div class="muted small" id="plateauDetail">—</div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 6px 0;">Distance vs mV</h3>
+      <div class="muted small">Paste lines: <b>distance mV</b> (space/comma/tab). Example: <code>61 197</code></div>
+      <textarea id="data" spellcheck="false"></textarea>
+
+      <h3 style="margin:12px 0 6px 0;">Plot (tap points to exclude)</h3>
+      <canvas id="plot" width="1000" height="340"></canvas>
+      <div class="muted small">Excluded points show as a red ✕. Tap again to include.</div>
+
+      <hr>
+
+      <h3 style="margin:0 0 6px 0;">Results</h3>
+      <div class="kpi">Knee distance: <span id="knee">—</span></div>
+      <div class="muted small" id="kneeDetail">—</div>
+
+      <hr>
+
+      <div class="kpi">Remote EPR V<sub>∞</sub> (V): <span id="vinf">—</span></div>
+      <div class="kpi">R<sub>g,test</sub> (Ω): <span id="rg">—</span></div>
+      <div class="muted small" id="fitDetail">—</div>
+
+      <hr>
+
+      <div class="kpi">Scale (I<sub>fault</sub>/I<sub>test</sub> × SF): <span id="scale">—</span></div>
+      <div class="kpi">EPR<sub>scaled</sub> (V): <span id="eprscaled">—</span></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
+  </script>
+</body>
+</html>
