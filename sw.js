@@ -1,4 +1,4 @@
-const CACHE = "epr-plotter-v2";
+const CACHE = "epr-plotter-v3";
 const ASSETS = ["./", "./index.html", "./app.js", "./sw.js", "./manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
